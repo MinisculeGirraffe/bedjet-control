@@ -1,13 +1,8 @@
-use btleplug::{
-    api::{Characteristic, Peripheral as _, WriteType},
-    platform::Peripheral,
-};
 use num_derive::{FromPrimitive, ToPrimitive};
-use num_traits::{FromPrimitive, ToPrimitive};
+use num_traits::FromPrimitive;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, thread::JoinHandle, time::Duration};
+use std::time::Duration;
 use typeshare::typeshare;
-use uuid::Uuid;
 
 pub trait Encode
 where
@@ -22,7 +17,6 @@ where
 {
     fn decode(data: &[u8]) -> Option<Self>;
 }
-
 
 #[typeshare]
 #[repr(u8)]

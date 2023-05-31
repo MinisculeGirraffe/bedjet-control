@@ -20,7 +20,7 @@ pub struct BedJet {
     pub wifi_password: Characteristic,
     pub commands: Characteristic,
     pub extended_data: Characteristic,
-    subscribe_task: Option<JoinHandle<()>>,
+    _subscribe_task: Option<JoinHandle<()>>,
 }
 
 impl BedJet {
@@ -47,7 +47,7 @@ impl BedJet {
             wifi_password: map.remove(&Self::WIFI_PASSWORD)?,
             commands: map.remove(&Self::COMMANDS)?,
             extended_data: map.remove(&Self::EXTENDED_DATA)?,
-            subscribe_task: None,
+            _subscribe_task: None,
         })
     }
 

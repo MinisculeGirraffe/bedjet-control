@@ -143,7 +143,7 @@ async fn send_command(
     Ok(())
 }
 
-type NotificationStream = Pin<Box<dyn Stream<Item = ValueNotification> + Send>>;
+type _NotificationStream = Pin<Box<dyn Stream<Item = ValueNotification> + Send>>;
 
 async fn handle_notify(bedjet: Peripheral, handle: AppHandle) {
     let status_char = bedjet
