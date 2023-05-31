@@ -1,21 +1,13 @@
 use btleplug::{
-    api::{Characteristic, Peripheral as _},
+    api::{Characteristic, Peripheral as _, WriteType},
     platform::Peripheral,
 };
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use serde::{Deserialize, Serialize};
-use typeshare::typeshare;
 use std::{collections::HashMap, thread::JoinHandle, time::Duration};
+use typeshare::typeshare;
 use uuid::Uuid;
-
-pub const SERVICE_UUID: Uuid = Uuid::from_u128(324577607269236719219879600350580);
-pub const DEVICE_STATUS: Uuid = Uuid::from_u128(649096160927663446003035620926836);
-pub const FRIENDLY_NAME: Uuid = Uuid::from_u128(649175389090177710340629164877172);
-pub const WIFI_SSID: Uuid = Uuid::from_u128(649254617252691974678222708827508);
-pub const WIFI_PASSWORD: Uuid = Uuid::from_u128(649333845415206239015816252777844);
-pub const COMMANDS: Uuid = Uuid::from_u128(649413073577720503353409796728180);
-pub const EXTENDED_DATA: Uuid = Uuid::from_u128(649492301740234767691003340678516);
 
 pub trait Encode
 where
@@ -31,44 +23,6 @@ where
     fn decode(data: &[u8]) -> Option<Self>;
 }
 
-#[derive(Debug)]
-pub struct BedJet {
-    pub peripheral: Peripheral,
-    pub device_status: Characteristic,
-    pub friendly_name: Characteristic,
-    pub wifi_ssid: Characteristic,
-    pub wifi_password: Characteristic,
-    pub commands: Characteristic,
-    pub extended_data: Characteristic,
-    subscribe_task: Option<JoinHandle<()>>,
-}
-
-impl BedJet {
-    pub fn from_peripheral(peripheral: Peripheral) -> Option<Self> {
-        let mut map: HashMap<Uuid, Characteristic> = peripheral
-            .characteristics()
-            .into_iter()
-            .map(|c| (c.uuid, c))
-            .collect();
-
-        Some(Self {
-            peripheral,
-            device_status: map.remove(&DEVICE_STATUS)?,
-            friendly_name: map.remove(&FRIENDLY_NAME)?,
-            wifi_ssid: map.remove(&WIFI_SSID)?,
-            wifi_password: map.remove(&WIFI_PASSWORD)?,
-            commands: map.remove(&COMMANDS)?,
-            extended_data: map.remove(&EXTENDED_DATA)?,
-            subscribe_task: None,
-        })
-    }
-
-    pub async fn get_friendly_name(&self) -> String {
-        let data = self.peripheral.read(&self.friendly_name).await.unwrap();
-
-        String::from_utf8(data).unwrap()
-    }
-}
 
 #[typeshare]
 #[repr(u8)]
@@ -186,7 +140,9 @@ pub enum UpdateStatus {
 
 #[typeshare]
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, ToPrimitive, Serialize,Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, ToPrimitive, Serialize, Deserialize,
+)]
 pub enum ButtonCode {
     Stop = 0x01,
     Cool = 0x02,
@@ -249,37 +205,11 @@ enum ParameterCode {
 #[typeshare]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, ToPrimitive)]
-enum CommandClass {
+pub enum CommandClass {
     Button = 0x01,
     SetTime = 0x02,
     SetTemp = 0x03,
     SetFan = 0x07,
     SetClock = 0x08,
     SetParameter = 0x40,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[typeshare]
-#[serde(tag = "type", content = "content")]
-pub enum Command {
-    Button(ButtonCode),
-    SetTime { hours: u8, minutes: u8 },
-    SetTemp(u8),
-    SetFan(u8),
-    SetClock { hours: u8, minutes: u8 },
-}
-
-impl Encode for Command {
-    fn encode(&self) -> Vec<u8> {
-        match self {
-            Command::Button(code) => vec![CommandClass::Button as u8, *code as u8],
-            Command::SetTime { hours, minutes } => {
-                vec![CommandClass::SetTime as u8, *hours, *minutes]
-            }
-            Command::SetTemp(temp) => vec![CommandClass::SetTemp as u8, *temp],
-            Command::SetFan(fan_step) => vec![CommandClass::SetFan as u8, *fan_step],
-            Command::SetClock { hours, minutes } => {
-                vec![CommandClass::SetClock as u8, *hours, *minutes]
-            }
-        }
-    }
 }

@@ -1,22 +1,19 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-pub mod proto;
 
-use std::collections::HashMap;
-use std::pin::Pin;
-use std::sync::Arc;
-
+use bedjet_control::proto::{Decode, DeviceStatus, DeviceStatusEvent, Encode};
+use bedjet_control::{BedJet, Command};
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, ValueNotification};
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::future::join_all;
 use futures::{Stream, StreamExt};
-use proto::{Command, DEVICE_STATUS, SERVICE_UUID};
+use std::collections::HashMap;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::async_runtime::Mutex;
 use tauri::{AppHandle, Manager as _, State};
 use tokio::time;
-
-use crate::proto::{Decode, DeviceStatus, DeviceStatusEvent, Encode, COMMANDS};
 
 #[derive(Debug, Default)]
 struct BTAdapters(Arc<Mutex<HashMap<String, Adapter>>>);
@@ -72,7 +69,7 @@ async fn scan_bedjets(
     let adapter = adapter_state.get_adapter(&adapter).await.unwrap();
     adapter
         .start_scan(ScanFilter {
-            services: vec![SERVICE_UUID],
+            services: vec![BedJet::SERVICE_UUID],
         })
         .await
         .unwrap();
@@ -131,7 +128,7 @@ async fn send_command(
         .clone()
         .characteristics()
         .into_iter()
-        .find(|i| i.uuid == COMMANDS)
+        .find(|i| i.uuid == BedJet::COMMANDS)
         .unwrap();
 
     periph
@@ -140,8 +137,9 @@ async fn send_command(
             &command.encode(),
             btleplug::api::WriteType::WithoutResponse,
         )
-        .await.unwrap();
-        
+        .await
+        .unwrap();
+
     Ok(())
 }
 
@@ -151,7 +149,7 @@ async fn handle_notify(bedjet: Peripheral, handle: AppHandle) {
     let status_char = bedjet
         .characteristics()
         .iter()
-        .find(|c| c.uuid == DEVICE_STATUS)
+        .find(|c| c.uuid == BedJet::DEVICE_STATUS)
         .cloned()
         .unwrap();
     println!("Found Status: {status_char:#?}");
