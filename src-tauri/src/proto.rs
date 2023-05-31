@@ -3,9 +3,10 @@ use btleplug::{
     platform::Peripheral,
 };
 use num_derive::{FromPrimitive, ToPrimitive};
-use num_traits::FromPrimitive;
-use serde::Serialize;
-use std::{collections::HashMap, time::Duration};
+use num_traits::{FromPrimitive, ToPrimitive};
+use serde::{Deserialize, Serialize};
+use typeshare::typeshare;
+use std::{collections::HashMap, thread::JoinHandle, time::Duration};
 use uuid::Uuid;
 
 pub const SERVICE_UUID: Uuid = Uuid::from_u128(324577607269236719219879600350580);
@@ -16,15 +17,30 @@ pub const WIFI_PASSWORD: Uuid = Uuid::from_u128(64933384541520623901581625277784
 pub const COMMANDS: Uuid = Uuid::from_u128(649413073577720503353409796728180);
 pub const EXTENDED_DATA: Uuid = Uuid::from_u128(649492301740234767691003340678516);
 
+pub trait Encode
+where
+    Self: Sized,
+{
+    fn encode(&self) -> Vec<u8>;
+}
+
+pub trait Decode
+where
+    Self: Sized,
+{
+    fn decode(data: &[u8]) -> Option<Self>;
+}
+
 #[derive(Debug)]
 pub struct BedJet {
-   pub peripheral: Peripheral,
-   pub device_status: Characteristic,
-   pub friendly_name: Characteristic,
-   pub wifi_ssid: Characteristic,
-   pub wifi_password: Characteristic,
-   pub commands: Characteristic,
-   pub extended_data: Characteristic,
+    pub peripheral: Peripheral,
+    pub device_status: Characteristic,
+    pub friendly_name: Characteristic,
+    pub wifi_ssid: Characteristic,
+    pub wifi_password: Characteristic,
+    pub commands: Characteristic,
+    pub extended_data: Characteristic,
+    subscribe_task: Option<JoinHandle<()>>,
 }
 
 impl BedJet {
@@ -34,6 +50,7 @@ impl BedJet {
             .into_iter()
             .map(|c| (c.uuid, c))
             .collect();
+
         Some(Self {
             peripheral,
             device_status: map.remove(&DEVICE_STATUS)?,
@@ -42,6 +59,7 @@ impl BedJet {
             wifi_password: map.remove(&WIFI_PASSWORD)?,
             commands: map.remove(&COMMANDS)?,
             extended_data: map.remove(&EXTENDED_DATA)?,
+            subscribe_task: None,
         })
     }
 
@@ -52,8 +70,7 @@ impl BedJet {
     }
 }
 
-
-
+#[typeshare]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, ToPrimitive, Serialize)]
 pub enum OperatingMode {
@@ -65,62 +82,71 @@ pub enum OperatingMode {
     Dry = 5,
     Wait = 6,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[typeshare]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct DeviceStatus {
     /// The total runtime left on the device
     pub remaining_duration: Duration,
     /// Temp in degrees C
-    pub actual_temp: u8,
+    pub actual_temp: f32,
     /// Temp in degrees C
-    pub target_temp: u8,
+    pub target_temp: f32,
     pub operating_mode: OperatingMode,
     // In percentages
     pub fan_step: u8,
     /// Maximum runtime for the current mode
     pub max_duration: Duration,
-    pub min_target_temp: u8,
-    pub max_target_temp: u8,
-    pub ambient_temp: u8,
+    pub min_target_temp: f32,
+    pub max_target_temp: f32,
+    pub ambient_temp: f32,
     pub shutdown_code: ShutDownCode,
     pub current_update_state: UpdateStatus,
 }
 
-impl DeviceStatus {
-    fn from_packet(packet: &[u8]) -> Option<Self> {
-        let remaining_hours = packet[3] as u64;
-        let remaining_mins = packet[4] as u64;
-        let remaining_secs = packet[5] as u64;
+impl Decode for DeviceStatus {
+    fn decode(data: &[u8]) -> Option<Self> {
+        let remaining_hours = *data.get(3)? as u64;
+        let remaining_mins = *data.get(4)? as u64;
+        let remaining_secs = *data.get(5)? as u64;
         let total_secs = (remaining_hours * 3600) + (remaining_mins * 60) + (remaining_secs);
 
         let remaining_duration = Duration::from_secs(total_secs);
-        let operating_mode = OperatingMode::from_u8(packet[8])?;
+        let operating_mode = OperatingMode::from_u8(*data.get(8)?)?;
 
-        let max_hours = packet[10] as u64;
-        let max_mins = packet[11] as u64;
+        let max_hours = *data.get(10)? as u64;
+        let max_mins = *data.get(11)? as u64;
 
         let max_secs = (max_hours * 3600) + (max_mins * 60);
 
         let max_duration = Duration::from_secs(max_secs);
 
-        let shutdown_code = ShutDownCode::from_u8(packet[17])?;
-        let current_update_state = UpdateStatus::from_u8(packet[25])?;
+        let shutdown_code = ShutDownCode::from_u8(*data.get(17)?)?;
+        let current_update_state = UpdateStatus::from_u8(*data.get(25)?)?;
 
         Some(Self {
             remaining_duration,
-            actual_temp: packet[6],
-            target_temp: packet[7],
+            actual_temp: (*data.get(6)? as f32) / 2.0,
+            target_temp: (*data.get(7)? as f32) / 2.0,
             operating_mode,
-            fan_step: packet[9].saturating_add(1).saturating_mul(5),
+            fan_step: data.get(9)?.saturating_add(1).saturating_mul(5),
             max_duration,
-            min_target_temp: packet[12],
-            max_target_temp: packet[13],
-            ambient_temp: packet[16],
+            min_target_temp: (*data.get(12)? as f32) / 2.0,
+            max_target_temp: (*data.get(13)? as f32) / 2.0,
+            ambient_temp: (*data.get(16)? as f32) / 2.0,
             shutdown_code,
             current_update_state,
         })
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[typeshare]
+pub struct DeviceStatusEvent {
+    pub id: String,
+    pub status: DeviceStatus,
+}
+
+#[typeshare]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, ToPrimitive, Serialize)]
 pub enum ShutDownCode {
@@ -134,6 +160,7 @@ pub enum ShutDownCode {
     ExtenderThermalTrip = 7,
 }
 
+#[typeshare]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, ToPrimitive, Serialize)]
 pub enum UpdateStatus {
@@ -157,9 +184,10 @@ pub enum UpdateStatus {
     UpdateFailed = 29,
 }
 
+#[typeshare]
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, ToPrimitive, Serialize)]
-enum ButtonCode {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, ToPrimitive, Serialize,Deserialize)]
+pub enum ButtonCode {
     Stop = 0x01,
     Cool = 0x02,
     Heat = 0x03,
@@ -192,6 +220,7 @@ enum ButtonCode {
     SetConfigCompleteFlag = 0x4f,
 }
 
+#[typeshare]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, ToPrimitive)]
 enum ParameterCode {
@@ -217,6 +246,7 @@ enum ParameterCode {
     FirmwareVersionCodes = 0x20,
 }
 
+#[typeshare]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, ToPrimitive)]
 enum CommandClass {
@@ -227,18 +257,29 @@ enum CommandClass {
     SetClock = 0x08,
     SetParameter = 0x40,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct Command {
-    command_class: CommandClass,
-    data: Vec<u8>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[typeshare]
+#[serde(tag = "type", content = "content")]
+pub enum Command {
+    Button(ButtonCode),
+    SetTime { hours: u8, minutes: u8 },
+    SetTemp(u8),
+    SetFan(u8),
+    SetClock { hours: u8, minutes: u8 },
 }
 
-impl Command {
-    fn new(command_class: CommandClass, data: Vec<u8>) -> Self {
-        Command {
-            command_class,
-            data,
+impl Encode for Command {
+    fn encode(&self) -> Vec<u8> {
+        match self {
+            Command::Button(code) => vec![CommandClass::Button as u8, *code as u8],
+            Command::SetTime { hours, minutes } => {
+                vec![CommandClass::SetTime as u8, *hours, *minutes]
+            }
+            Command::SetTemp(temp) => vec![CommandClass::SetTemp as u8, *temp],
+            Command::SetFan(fan_step) => vec![CommandClass::SetFan as u8, *fan_step],
+            Command::SetClock { hours, minutes } => {
+                vec![CommandClass::SetClock as u8, *hours, *minutes]
+            }
         }
     }
 }
