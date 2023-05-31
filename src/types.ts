@@ -68,6 +68,31 @@ export interface DeviceStatusEvent {
 	status: DeviceStatus;
 }
 
+export type Command =
+	| { type: "Button", content: ButtonCode }
+	| {
+		type: "SetTime", content: {
+			hours: number;
+			minutes: number;
+		}
+	}
+	| { type: "SetTemp", content: Temp }
+	| { type: "SetFan", content: Fan }
+	| {
+		type: "SetClock", content: {
+			hours: number;
+			minutes: number;
+		}
+	};
+
+export type Temp =
+	| { type: "Celsius", value: number }
+	| { type: "Fahrenheit", value: number };
+
+export type Fan =
+	| { type: "Step", value: number }
+	| { type: "Percent", value: number };
+
 export enum ButtonCode {
 	Stop = "Stop",
 	Cool = "Cool",
@@ -132,21 +157,4 @@ export enum CommandClass {
 	SetClock = "SetClock",
 	SetParameter = "SetParameter",
 }
-
-export type Command =
-	| { type: "Button", content: ButtonCode }
-	| {
-		type: "SetTime", content: {
-			hours: number;
-			minutes: number;
-		}
-	}
-	| { type: "SetTemp", content: number }
-	| { type: "SetFan", content: number }
-	| {
-		type: "SetClock", content: {
-			hours: number;
-			minutes: number;
-		}
-	};
 

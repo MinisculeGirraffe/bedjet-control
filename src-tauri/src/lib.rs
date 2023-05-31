@@ -86,14 +86,14 @@ pub enum Command {
 #[serde(tag = "type", content = "value")]
 #[typeshare]
 pub enum Temp {
-    Celcius(u8),
+    Celsius(u8),
     Fahrenheit(u8),
 }
 
 impl Temp {
     fn encode_byte(&self) -> u8 {
         match self {
-            Temp::Celcius(val) => val.saturating_mul(2),
+            Temp::Celsius(val) => val.saturating_mul(2),
             Temp::Fahrenheit(val) => val
                 .saturating_sub(32)
                 .saturating_mul(5)

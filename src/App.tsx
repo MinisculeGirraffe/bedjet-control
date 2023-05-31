@@ -104,7 +104,7 @@ export async function setTemperature(id: string, deviceStatus: DeviceStatus, tar
       break;
     }
   }
-  console.log(requiredMode)
+
 
   if (requiredMode === undefined) {
     throw new Error('Invalid target temperature');
@@ -126,12 +126,12 @@ export async function setTemperature(id: string, deviceStatus: DeviceStatus, tar
     await send_command(id, { type: "Button", content: requiredButton });
     // restore the timer and fan step
     await send_command(id, { type: "SetTime", content: { hours: Math.floor(originalTimer.secs / 3600), minutes: Math.floor((originalTimer.secs % 3600) / 60) } });
-    await send_command(id, { type: "SetFan", content: convertFanPercentToStep(originalFanStep) });
+    await send_command(id, { type: "SetFan", content: { type: "Percent", value: originalFanStep } });
   }
 
   // set the temperature
-  const temp = Math.round(FtoC(targetTemp) * 2);
-  await send_command(id, { type: "SetTemp", content: temp });
+
+  await send_command(id, { type: "SetTemp", content: { "type": "Fahrenheit", value: targetTemp } });
 
 }
 
