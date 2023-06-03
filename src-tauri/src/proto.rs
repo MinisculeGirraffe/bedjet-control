@@ -4,13 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use typeshare::typeshare;
 
-pub trait Encode
-where
-    Self: Sized,
-{
-    fn encode(&self) -> Vec<u8>;
-}
-
 pub trait Decode
 where
     Self: Sized,
@@ -170,10 +163,9 @@ pub enum ButtonCode {
     SetConfigCompleteFlag = 0x4f,
 }
 
-#[typeshare]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, ToPrimitive)]
-enum ParameterCode {
+pub enum ParameterCode {
     DeviceName = 0x00,
     MemoryName1 = 0x01,
     MemoryName2 = 0x02,

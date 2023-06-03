@@ -1,8 +1,9 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use bedjet_control::proto::{Decode, DeviceStatus, DeviceStatusEvent, Encode};
-use bedjet_control::{BedJet, Command};
+use bedjet_control::device::BedJet;
+use bedjet_control::proto::{Decode, DeviceStatus, DeviceStatusEvent};
+use bedjet_control::{ Command, Encode};
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, ValueNotification};
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::future::join_all;
@@ -128,13 +129,13 @@ async fn send_command(
         .clone()
         .characteristics()
         .into_iter()
-        .find(|i| i.uuid == BedJet::COMMANDS)
+        .find(|i| i.uuid == BedJet::COMMANDS_UUID)
         .unwrap();
 
     periph
         .write(
             &command_char,
-            &command.encode(),
+            &command.encode().unwrap(),
             btleplug::api::WriteType::WithoutResponse,
         )
         .await
@@ -149,7 +150,7 @@ async fn handle_notify(bedjet: Peripheral, handle: AppHandle) {
     let status_char = bedjet
         .characteristics()
         .iter()
-        .find(|c| c.uuid == BedJet::DEVICE_STATUS)
+        .find(|c| c.uuid == BedJet::DEVICE_STATUS_UUID)
         .cloned()
         .unwrap();
     println!("Found Status: {status_char:#?}");

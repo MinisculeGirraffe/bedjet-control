@@ -121,6 +121,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "thiserror",
  "tokio",
  "typeshare",
  "uuid",

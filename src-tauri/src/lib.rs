@@ -1,105 +1,98 @@
-use std::collections::HashMap;
-use btleplug::{
-    api::{Characteristic, Peripheral as _, WriteType},
-    platform::Peripheral,
-};
-use proto::{ButtonCode, CommandClass, Encode};
+use proto::{ButtonCode, CommandClass, ParameterCode};
 use serde::{Deserialize, Serialize};
-use tauri::async_runtime::JoinHandle;
+use std::io::{self, Read};
+use thiserror::Error;
 use typeshare::typeshare;
-use uuid::Uuid;
+pub mod device;
+pub mod proto;
 
-pub mod proto; 
+pub trait Encode
+where
+    Self: Sized,
+{
+    fn encode(&self) -> Result<Vec<u8>, InterfaceError> {
+        let mut bytes = Vec::new();
+        self.write_to(&mut bytes)?;
+        Ok(bytes)
+    }
 
-#[derive(Debug)]
-pub struct BedJet {
-    pub peripheral: Peripheral,
-    pub device_status: Characteristic,
-    pub friendly_name: Characteristic,
-    pub wifi_ssid: Characteristic,
-    pub wifi_password: Characteristic,
-    pub commands: Characteristic,
-    pub extended_data: Characteristic,
-    _subscribe_task: Option<JoinHandle<()>>,
+    fn write_to<W: io::Write>(&self, writer: &mut W) -> Result<(), InterfaceError>;
+}
+#[derive(Error, Debug)]
+pub enum InterfaceError {
+    #[error("Invalid Data provided to protocol")]
+    InvalidPameter,
+    #[error("I/O Error: {0}")]
+    IOError(#[from] io::Error),
 }
 
-impl BedJet {
-    pub const SERVICE_UUID: Uuid = Uuid::from_u128(324577607269236719219879600350580);
-    pub const DEVICE_STATUS: Uuid = Uuid::from_u128(649096160927663446003035620926836);
-    pub const FRIENDLY_NAME: Uuid = Uuid::from_u128(649175389090177710340629164877172);
-    pub const WIFI_SSID: Uuid = Uuid::from_u128(649254617252691974678222708827508);
-    pub const WIFI_PASSWORD: Uuid = Uuid::from_u128(649333845415206239015816252777844);
-    pub const COMMANDS: Uuid = Uuid::from_u128(649413073577720503353409796728180);
-    pub const EXTENDED_DATA: Uuid = Uuid::from_u128(649492301740234767691003340678516);
-
-    pub fn from_peripheral(peripheral: Peripheral) -> Option<Self> {
-        let mut map: HashMap<Uuid, Characteristic> = peripheral
-            .characteristics()
-            .into_iter()
-            .map(|c| (c.uuid, c))
-            .collect();
-
-        Some(Self {
-            peripheral,
-            device_status: map.remove(&Self::DEVICE_STATUS)?,
-            friendly_name: map.remove(&Self::FRIENDLY_NAME)?,
-            wifi_ssid: map.remove(&Self::WIFI_SSID)?,
-            wifi_password: map.remove(&Self::WIFI_PASSWORD)?,
-            commands: map.remove(&Self::COMMANDS)?,
-            extended_data: map.remove(&Self::EXTENDED_DATA)?,
-            _subscribe_task: None,
-        })
-    }
-
-    pub async fn get_friendly_name(&self) -> String {
-        let data = self.peripheral.read(&self.friendly_name).await.unwrap();
-
-        String::from_utf8(data).unwrap()
-    }
-    pub async fn send_command(&self, command: Command) -> Result<(), btleplug::Error> {
-        self.peripheral
-            .write(
-                &self.commands,
-                &command.encode(),
-                WriteType::WithoutResponse,
-            )
-            .await?;
-
-        Ok(())
-    }
-}
-
-
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[typeshare]
 #[serde(tag = "type", content = "content")]
+/// A higher level enum containing the commands that can be sent to the device, and the parameters to those commands
 pub enum Command {
     Button(ButtonCode),
     SetTime { hours: u8, minutes: u8 },
     SetTemp(Temp),
     SetFan(Fan),
     SetClock { hours: u8, minutes: u8 },
+    SetParam(SetParamKind),
 }
+
+impl Encode for Command {
+    fn write_to<W: io::Write>(&self, writer: &mut W) -> Result<(), InterfaceError> {
+        match self {
+            Command::Button(code) => {
+                writer.write_all(&[CommandClass::Button as u8, *code as u8])?
+            }
+            Command::SetTime { hours, minutes } => {
+                writer.write_all(&[CommandClass::SetTime as u8, *hours, *minutes])?;
+            }
+            Command::SetTemp(temp) => {
+                writer.write_all(&[CommandClass::SetTemp as u8])?;
+                temp.write_to(writer)?
+            }
+            Command::SetFan(fan) => {
+                writer.write_all(&[CommandClass::SetFan as u8])?;
+                fan.write_to(writer)?
+            }
+            Command::SetClock { hours, minutes } => {
+                writer.write_all(&[CommandClass::SetClock as u8, *hours, *minutes])?
+            }
+            Command::SetParam(param) => {
+                writer.write_all(&[CommandClass::SetParameter as u8])?;
+                param.write_to(writer)?
+            }
+        };
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 #[typeshare]
 pub enum Temp {
+    /// The temperature in degrees Celsius
     Celsius(u8),
+    /// The temperature in degrees Fahrenheit
     Fahrenheit(u8),
 }
 
-impl Temp {
-    fn encode_byte(&self) -> u8 {
-        match self {
+impl Encode for Temp {
+    fn write_to<W: io::Write>(&self, writer: &mut W) -> Result<(), InterfaceError> {
+        // The actual value we need to write is stored in units of 0.5 Celsius, so we multiply by 2
+        // or convert to Celsius and multiply by 2
+        let value = match self {
             Temp::Celsius(val) => val.saturating_mul(2),
             Temp::Fahrenheit(val) => val
                 .saturating_sub(32)
                 .saturating_mul(5)
                 .saturating_div(9)
                 .saturating_mul(2),
-        }
+        };
+        writer.write_all(&[value])?;
+        Ok(())
     }
 }
 
@@ -112,25 +105,55 @@ pub enum Fan {
 }
 
 impl Fan {
-    pub fn encode_byte(&self) -> u8 {
+    fn validate(&self) -> Result<(), InterfaceError> {
         match self {
-            Fan::Step(val) => *val,
-            Fan::Percent(val) => val.saturating_div(5).saturating_sub(1),
+            Fan::Step(val) if *val > 19 => Err(InterfaceError::InvalidPameter),
+            Fan::Percent(val) if *val > 100 => Err(InterfaceError::InvalidPameter),
+            _ => Ok(()),
         }
     }
 }
-impl Encode for Command {
-    fn encode(&self) -> Vec<u8> {
+
+impl Encode for Fan {
+    fn write_to<W: io::Write>(&self, writer: &mut W) -> Result<(), InterfaceError> {
+        self.validate()?;
+
+        let value = match self {
+            Fan::Step(val) => *val,
+            Fan::Percent(val) => val.saturating_div(5).saturating_sub(1),
+        };
+
+        writer.write_all(&[value])?;
+
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SetParamKind {
+    /// Cannot contain a String longer than 15 bytes.
+    DeviceName(String),
+}
+
+impl Encode for SetParamKind {
+    fn write_to<W: io::Write>(&self, writer: &mut W) -> Result<(), InterfaceError> {
         match self {
-            Command::Button(code) => vec![CommandClass::Button as u8, *code as u8],
-            Command::SetTime { hours, minutes } => {
-                vec![CommandClass::SetTime as u8, *hours, *minutes]
-            }
-            Command::SetTemp(temp) => vec![CommandClass::SetTemp as u8, temp.encode_byte()],
-            Command::SetFan(fan) => vec![CommandClass::SetFan as u8, fan.encode_byte()],
-            Command::SetClock { hours, minutes } => {
-                vec![CommandClass::SetClock as u8, *hours, *minutes]
+            SetParamKind::DeviceName(name) => {
+                // Validate that the string is within the allowed limit
+                if name.len() > 15 {
+                    return Err(InterfaceError::InvalidPameter);
+                }
+                // Write the header data
+                writer.write_all(&[ParameterCode::DeviceName as u8, 0x10])?;
+                // And then write the string
+                writer.write_all(name.as_bytes())?;
+
+                // Calculate the number of bytes to zero pad with
+                let padding = 16 - name.len();
+
+                // And write those bytes out
+                io::copy(&mut io::repeat(0).take(padding as u64), writer)?;
             }
         }
+        Ok(())
     }
 }
