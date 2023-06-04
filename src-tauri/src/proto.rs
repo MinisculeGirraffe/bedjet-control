@@ -1,15 +1,6 @@
 use num_derive::{FromPrimitive, ToPrimitive};
-use num_traits::FromPrimitive;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use typeshare::typeshare;
-
-pub trait Decode
-where
-    Self: Sized,
-{
-    fn decode(data: &[u8]) -> Option<Self>;
-}
 
 #[typeshare]
 #[repr(u8)]
@@ -23,64 +14,36 @@ pub enum OperatingMode {
     Dry = 5,
     Wait = 6,
 }
+
 #[typeshare]
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeviceStatus {
     /// The total runtime left on the device
-    pub remaining_duration: Duration,
-    /// Temp in degrees C
-    pub actual_temp: f32,
-    /// Temp in degrees C
-    pub target_temp: f32,
+    pub remaining_hours: u8,
+    pub remaining_minutes: u8,
+    pub remaining_seconds: u8,
+    /// Stored in units of 0.5 degrees celsius
+    pub actual_temp: u8,
+    /// Stored in units of 0.5 degrees celsius
+    pub target_temp: u8,
     pub operating_mode: OperatingMode,
-    // In percentages
+    /// Represented as a number between 0-19
     pub fan_step: u8,
     /// Maximum runtime for the current mode
-    pub max_duration: Duration,
-    pub min_target_temp: f32,
-    pub max_target_temp: f32,
-    pub ambient_temp: f32,
+    pub max_duration_hours: u8,
+    pub max_duration_minutes: u8,
+    /// Stored in units of 0.5 degrees celsius
+    pub min_target_temp: u8,
+    /// Stored in units of 0.5 degrees celsius
+    pub max_target_temp: u8,
+    /// Stored in units of 0.5 degrees celsius
+    pub ambient_temp: u8,
     pub shutdown_code: ShutDownCode,
-    pub current_update_state: UpdateStatus,
+    pub update_status: UpdateStatus,
 }
 
-impl Decode for DeviceStatus {
-    fn decode(data: &[u8]) -> Option<Self> {
-        let remaining_hours = *data.get(3)? as u64;
-        let remaining_mins = *data.get(4)? as u64;
-        let remaining_secs = *data.get(5)? as u64;
-        let total_secs = (remaining_hours * 3600) + (remaining_mins * 60) + (remaining_secs);
 
-        let remaining_duration = Duration::from_secs(total_secs);
-        let operating_mode = OperatingMode::from_u8(*data.get(8)?)?;
-
-        let max_hours = *data.get(10)? as u64;
-        let max_mins = *data.get(11)? as u64;
-
-        let max_secs = (max_hours * 3600) + (max_mins * 60);
-
-        let max_duration = Duration::from_secs(max_secs);
-
-        let shutdown_code = ShutDownCode::from_u8(*data.get(17)?)?;
-        let current_update_state = UpdateStatus::from_u8(*data.get(25)?)?;
-
-        Some(Self {
-            remaining_duration,
-            actual_temp: (*data.get(6)? as f32) / 2.0,
-            target_temp: (*data.get(7)? as f32) / 2.0,
-            operating_mode,
-            fan_step: data.get(9)?.saturating_add(1).saturating_mul(5),
-            max_duration,
-            min_target_temp: (*data.get(12)? as f32) / 2.0,
-            max_target_temp: (*data.get(13)? as f32) / 2.0,
-            ambient_temp: (*data.get(16)? as f32) / 2.0,
-            shutdown_code,
-            current_update_state,
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 #[typeshare]
 pub struct DeviceStatusEvent {
     pub id: String,

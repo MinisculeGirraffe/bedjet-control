@@ -1,14 +1,16 @@
-use std::collections::HashMap;
-
+use crate::{proto::DeviceStatus, Command, Decode, Encode, InterfaceError};
 use btleplug::{
     api::{Characteristic, Peripheral as _, WriteType},
     platform::Peripheral,
 };
-use tauri::async_runtime::JoinHandle;
+use futures::StreamExt;
+use std::{
+    collections::HashMap,
+    io::{Cursor, Read},
+};
 use thiserror::Error;
+use tokio::sync::watch;
 use uuid::Uuid;
-
-use crate::{Command, Encode, InterfaceError};
 
 #[derive(Error, Debug)]
 pub enum DeviceError {
@@ -28,7 +30,7 @@ pub struct BedJet {
     wifi_password: Characteristic,
     command: Characteristic,
     extended_data: Characteristic,
-    _subscribe_task: Option<JoinHandle<()>>,
+    device_status_send: watch::Sender<Option<DeviceStatus>>,
 }
 
 impl BedJet {
@@ -47,6 +49,8 @@ impl BedJet {
             .map(|c| (c.uuid, c))
             .collect();
 
+        let (device_status_send, _) = watch::channel(None);
+
         Some(Self {
             peripheral,
             device_status: map.remove(&Self::DEVICE_STATUS_UUID)?,
@@ -55,8 +59,62 @@ impl BedJet {
             wifi_password: map.remove(&Self::WIFI_PASSWORD_UUID)?,
             command: map.remove(&Self::COMMANDS_UUID)?,
             extended_data: map.remove(&Self::EXTENDED_DATA_UUID)?,
-            _subscribe_task: None,
+            device_status_send,
         })
+    }
+
+    async fn handle_notifications(&self) -> Result<(), DeviceError> {
+        let mut stream = self.peripheral.notifications().await?;
+
+        while let Some(msg) = stream.next().await {
+            let _ = match msg.uuid {
+                BedJet::DEVICE_STATUS_UUID => self.handle_device_status(msg.value).await,
+                _ => Ok(()),
+            };
+        }
+
+        Ok(())
+    }
+
+    async fn listen_status(&self) -> Result<(), btleplug::Error> {
+        self.peripheral.subscribe(&self.device_status).await
+    }
+
+    async fn unlisten_status(&self) -> Result<(), btleplug::Error> {
+        self.peripheral.unsubscribe(&self.device_status).await
+    }
+    pub async fn get_status(&self) -> Result<DeviceStatus, watch::error::RecvError> {
+        let mut recv = self.device_status_send.subscribe();
+
+        let status = recv
+            .wait_for(|val| val.is_some())
+            .await?
+            .to_owned()
+            .expect("Value was checked as Some, and was actually None");
+
+        Ok(status)
+    }
+    async fn handle_device_status(&self, message: Vec<u8>) -> Result<(), DeviceError> {
+        // Calculate this up here before the cursor takes ownership
+        let has_enough_bytes = message.get(0).is_some_and(|val| *val == 0);
+        let mut cursor = Cursor::new(message);
+        // We want to skip that first byte since it's just informational
+        cursor.set_position(1);
+
+        let status: DeviceStatus;
+        // If the entire packet isn't contained in the message we received
+        if !has_enough_bytes {
+            // grab the rest of it
+            let rest: Vec<u8> = self.peripheral.read(&self.device_status).await?;
+            // and decode it
+            status = DeviceStatus::read_from(cursor.chain(Cursor::new(rest)))?;
+        } else {
+            // otherwise just decode it with what we have
+            status = DeviceStatus::read_from(cursor)?;
+        }
+
+        let _ = self.device_status_send.send_replace(Some(status));
+        Ok(())
     }
 
     pub async fn get_friendly_name(&self) -> String {

@@ -163,6 +163,7 @@ async fn handle_notify(bedjet: Peripheral, handle: AppHandle) {
     let mut msg_stream = bedjet.notifications().await.unwrap();
 
     while let Some(mut msg) = msg_stream.next().await {
+        
         if msg.value[0] != 0 {
             if let Ok(mut msg_continued) = bedjet.read(&status_char).await {
                 msg.value.append(&mut msg_continued);
